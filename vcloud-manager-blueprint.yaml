@@ -215,6 +215,15 @@ inputs:
   admin_password:
     default: admin
 
+  agent_rest_username:
+    default: cfy_agent
+
+  agent_rest_password:
+    default: cfy_agent
+
+  agent_verify_rest_certificate:
+    default: true
+
   insecure_endpoints_disabled:
     description: Disables insecure REST endpoints
     type: boolean
@@ -498,6 +507,15 @@ inputs:
       using "info" (or a more restrictive level) for production environments.
     type: string
     default: debug
+
+  #############################
+  # REST Inputs
+  #############################
+  rest_host_internal_endpoint_type:
+    default: private_ip
+
+  rest_host_external_endpoint_type:
+    default: public_ip
 
   #############################
   # Elasticsearch Inputs
@@ -840,6 +858,8 @@ node_templates:
     relationships:
       - type: cloudify.relationships.contained_in
         target: manager_host
+      - type: cloudify.relationships.depends_on
+        target: manager_configuration
 
   manager_configuration:
     type: cloudify.nodes.MyCloudifyManager
@@ -860,6 +880,9 @@ node_templates:
           broker_pass: { get_input: rabbitmq_password }
           broker_ssl_enabled: { get_input: rabbitmq_ssl_enabled }
           broker_ssl_cert: { get_input: rabbitmq_cert_public }
+          rest_username: { get_input: agent_rest_username }
+          rest_password: { get_input: agent_rest_password }
+          verify_rest_certificate: { get_input: agent_verify_rest_certificate }
 
         workflows:
           task_retries: -1  # this means forever
@@ -908,7 +931,7 @@ node_templates:
         start:
           implementation: fabric.fabric_plugin.tasks.run_script
           inputs:
-            script_path: components/manager/scripts/configure_manager.sh
+            script_path: components/manager/scripts/configure_manager.py
             fabric_env: *vcloud_fabric_env
 
     relationships:
@@ -917,11 +940,13 @@ node_templates:
         target_interfaces:
           cloudify.interfaces.relationship_lifecycle:
             postconfigure:
-              implementation: components/manager/scripts/set_manager_public_ip.py
+              implementation: components/manager/scripts/set_manager_ips.py
               inputs:
                 public_ip: { get_attribute: [manager_public_ip, public_ip] }
+                rest_host_internal_endpoint_type: { get_property: [rest_service, rest_host_internal_endpoint_type] }
+                rest_host_external_endpoint_type: { get_property: [rest_service, rest_host_external_endpoint_type] }
       - type: cloudify.relationships.depends_on
-        target: manager_resources
+        target: manager_public_ip
 
   # #####################################################################
   # The Python and Java nodes are used to provide runtime environments
@@ -939,6 +964,8 @@ node_templates:
         target: manager_host
       - type: cloudify.relationships.depends_on
         target: manager_configuration
+      - type: cloudify.relationships.depends_on
+        target: manager_resources
 
   java_runtime:
     type: manager.nodes.JavaRuntime
@@ -947,6 +974,8 @@ node_templates:
         target: manager_host
       - type: cloudify.relationships.depends_on
         target: manager_configuration
+      - type: cloudify.relationships.depends_on
+        target: manager_resources
 
   ######################################################################
   # These are the nodes comprising the Cloudify Manager's components
@@ -958,6 +987,8 @@ node_templates:
         target: manager_host
       - type: cloudify.relationships.depends_on
         target: manager_configuration
+      - type: cloudify.relationships.depends_on
+        target: manager_resources
 
   elasticsearch:
     type: manager.nodes.Elasticsearch
@@ -965,9 +996,11 @@ node_templates:
       - type: cloudify.relationships.contained_in
         target: manager_host
       - type: cloudify.relationships.depends_on
-        target: java_runtime
-      - type: cloudify.relationships.depends_on
         target: manager_configuration
+      - type: cloudify.relationships.depends_on
+        target: manager_resources
+      - type: cloudify.relationships.depends_on
+        target: java_runtime
 
   logstash:
     type: manager.nodes.Logstash
@@ -975,11 +1008,13 @@ node_templates:
       - type: cloudify.relationships.contained_in
         target: manager_host
       - type: cloudify.relationships.depends_on
+        target: manager_configuration
+      - type: cloudify.relationships.depends_on
+        target: manager_resources
+      - type: cloudify.relationships.depends_on
         target: java_runtime
       - type: logstash_to_elasticsearch
         target: elasticsearch
-      - type: cloudify.relationships.depends_on
-        target: manager_configuration
 
   influxdb:
     type: manager.nodes.InfluxDB
@@ -988,16 +1023,20 @@ node_templates:
         target: manager_host
       - type: cloudify.relationships.depends_on
         target: manager_configuration
+      - type: cloudify.relationships.depends_on
+        target: manager_resources
 
   nginx:
     type: manager.nodes.Nginx
     relationships:
       - type: cloudify.relationships.contained_in
         target: manager_host
+      - type: cloudify.relationships.depends_on
+        target: manager_resources
+      - type: cloudify.relationships.depends_on
+        target: rest_service
       - type: nginx_to_manager_configuration
         target: manager_configuration
-      - type: nginx_to_restservice
-        target: rest_service
 
   riemann:
     type: manager.nodes.Riemann
@@ -1005,13 +1044,15 @@ node_templates:
       - type: cloudify.relationships.contained_in
         target: manager_host
       - type: cloudify.relationships.depends_on
+        target: manager_resources
+      - type: cloudify.relationships.depends_on
         target: java_runtime
+      - type: riemann_to_manager_configuration
+        target: manager_configuration
       - type: riemann_to_rabbitmq
         target: rabbitmq
       - type: riemann_to_nginx
         target: nginx
-      - type: cloudify.relationships.depends_on
-        target: manager_configuration
 
   rest_service:
     type: manager.nodes.RestService
@@ -1019,8 +1060,10 @@ node_templates:
       - type: cloudify.relationships.contained_in
         target: manager_host
       - type: cloudify.relationships.depends_on
+        target: manager_resources
+      - type: cloudify.relationships.depends_on
         target: python_runtime
-      - type: rest_to_mgr_config
+      - type: rest_to_manager_configuration
         target: manager_configuration
       - type: restservice_to_elasticsearch
         target: elasticsearch
@@ -1033,12 +1076,14 @@ node_templates:
       - type: cloudify.relationships.contained_in
         target: manager_host
       - type: cloudify.relationships.depends_on
+        target: manager_resources
+      - type: cloudify.relationships.depends_on
         target: python_runtime
+      - type: cloudify.relationships.depends_on
+        target: nginx
       - type: mgmtworker_to_rabbitmq
         target: rabbitmq
-      - type: mgmtworker_to_nginx
-        target: nginx
-      - type: cloudify.relationships.depends_on
+      - type: mgmtworker_to_manager_configuration
         target: manager_configuration
 
   amqp_influx:
@@ -1047,13 +1092,15 @@ node_templates:
       - type: cloudify.relationships.contained_in
         target: manager_host
       - type: cloudify.relationships.depends_on
+        target: manager_configuration
+      - type: cloudify.relationships.depends_on
+        target: manager_resources
+      - type: cloudify.relationships.depends_on
         target: python_runtime
       - type: amqpinflux_to_rabbitmq
         target: rabbitmq
       - type: amqpinflux_to_influxdb
         target: influxdb
-      - type: cloudify.relationships.depends_on
-        target: manager_configuration
 
   webui:
     type: manager.nodes.WebUI
@@ -1064,8 +1111,6 @@ node_templates:
         target: rest_service
       - type: webui_to_influxdb
         target: influxdb
-      - type: cloudify.relationships.depends_on
-        target: manager_configuration
 
   #################################
   # Sanity
@@ -1124,5 +1169,7 @@ plugins:
 outputs:
   manager_ip:
     value: { get_attribute: [manager_public_ip, public_ip] }
+  rest_server_public_certificate:
+    value: { get_attribute: [manager_configuration, external_rest_cert_content] }
   private_ip:
     value: { get_attribute: [ manager_host, ip ]}
