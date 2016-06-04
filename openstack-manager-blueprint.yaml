@@ -1,3 +1,4 @@
+#Tuned for Datacentred.io, lex (c) 2016-06-09
 tosca_definitions_version: cloudify_dsl_1_2
 
 imports:
@@ -87,7 +88,7 @@ inputs:
     type: string
 
   resources_prefix:
-    default: ''
+    default:
     type: string
 
   management_network_name:
@@ -601,8 +602,9 @@ node_templates:
     properties:
       resource_id: { get_input: management_subnet_name }
       subnet:
+        dns_nameservers: [8.8.8.8]
         ip_version: 4
-        cidr: 10.67.79.0/24
+        cidr: 10.0.1.0/24
       openstack_config: *openstack_configuration
     relationships:
       - target: management_network
@@ -626,6 +628,7 @@ node_templates:
   router:
     type: cloudify.openstack.nodes.Router
     properties:
+      use_external_resource: true
       resource_id: { get_input: management_router }
       openstack_config: *openstack_configuration
     relationships:
