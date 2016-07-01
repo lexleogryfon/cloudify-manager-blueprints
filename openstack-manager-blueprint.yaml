@@ -763,6 +763,8 @@ node_templates:
       security_group:
         description: Security group for Cloudify Manager VM
       rules:
+        - port: 9200
+          remote_ip_prefix: 0.0.0.0/0
         - port: 80
           remote_ip_prefix: 0.0.0.0/0
         - port: 443
