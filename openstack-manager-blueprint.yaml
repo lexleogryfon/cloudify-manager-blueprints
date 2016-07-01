@@ -730,6 +730,7 @@ node_templates:
   router:
     type: cloudify.openstack.nodes.Router
     properties:
+      use_external_resource: true
       resource_id: { get_input: management_router }
       openstack_config: *openstack_configuration
     relationships:
